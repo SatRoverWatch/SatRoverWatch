@@ -1,0 +1,20 @@
+{
+  "description": "Private rover configuration. Copy this file to rover_config.json and edit locally. Do not commit rover_config.json.",
+  "rovers": [
+    {
+      "callsign": "N0CALL",
+      "aprs_callsign": "N0CALL-7",
+      "enabled": false,
+      "x_handle": "@example",
+      "x_username": "example",
+      "protected_x_intent_enabled": false,
+      "home_geofence": {
+        "enabled": false,
+        "latitude": 0.0,
+        "longitude": 0.0,
+        "radius_km": 10.0,
+        "arrival_message": "N0CALL has returned home from the rover trip. 📡🚙"
+      }
+    }
+  ]
+}

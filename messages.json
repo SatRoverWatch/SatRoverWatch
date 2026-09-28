@@ -1,0 +1,73 @@
+{
+  "_README": [
+    "Edit the pools below to change SatRoverWatch wording without editing Python.",
+    "GRID_CHANGE supports {callsign}, {old_grid}, and {new_grid}. Keep those placeholders where you want the live values inserted.",
+    "The watcher avoids immediately repeating the last-used line in each pool.",
+    "If messages.json is missing or invalid, satroverwatch.py uses built-in fallback wording."
+  ],
+  "ROVER_RETURN": [
+    "Have a great day roving and be safe!",
+    "Good luck on the grids today!",
+    "Have fun out there and happy roving!",
+    "Safe travels and good luck on the satellites!",
+    "Another day of roving — have fun out there!"
+  ],
+  "GRID_CHANGE": [
+    "Grid change: {callsign} has moved from {old_grid} to {new_grid}.",
+    "Another grid in the rearview mirror — {callsign} has crossed from {old_grid} into {new_grid}.",
+    "The Rovermobile rolls on! {callsign} has moved from {old_grid} into {new_grid}.",
+    "New grid! {callsign} has crossed the line from {old_grid} into {new_grid}.",
+    "{callsign} is collecting grids again — {old_grid} is behind us and {new_grid} is now on the map.",
+    "Grid boundary crossed: {old_grid} → {new_grid}. The rover rolls on!",
+    "Another line on the map crossed — {callsign} is now in {new_grid}, after leaving {old_grid}.",
+    "The Rovermobile has rolled into {new_grid}. Previous grid: {old_grid}.",
+    "Onward to another grid! {callsign} has moved from {old_grid} to {new_grid}.",
+    "{old_grid} → {new_grid}: another grid change for {callsign}."
+  ],
+  "GRID_MOVING": [
+    "The rover is currently on the move. 📡🚙",
+    "The Rovermobile is still rolling. 🚙📡",
+    "The rover rolls on toward the next grid. 🚙🛰️",
+    "Still moving — who knows which grid is next? 📡🚙"
+  ],
+  "GRID_SIGNOFF": [
+    "Happy roving! 🛰️",
+    "Keep on roving! 🚙🛰️",
+    "Safe travels, rover! 📡🚙",
+    "Onward to the next grid! 🛰️🚙",
+    "Happy grid chasing! 📡🛰️"
+  ],
+  "QUIET_TIME": [
+    "Rover quiet time? Even satellite rovers need to recharge. 😴🛰️",
+    "Shhh... rover quiet time. 🤫 More grids tomorrow?",
+    "Looks like the rover may be taking a well-earned break. 🚙💤",
+    "A little rover downtime before the next adventure? 😴📡",
+    "Resting the rover for a bit? There are always more grids ahead. 🚙🛰️"
+  ],
+  "ROVER_DOG": [
+    "Rover Dog stop? 🌭 Or just fueling up for more grids? 🚙🛰️",
+    "Fuel for the rover... and maybe a Rover Dog for the operator? 🌭😄",
+    "A quick pit stop before chasing more grids? ⛽🚙🛰️",
+    "Rover refueling stop — machine, operator, or both? 🌭⛽",
+    "Pit stop time. The rover has grids to chase! 🚙📡"
+  ],
+  "ROVER_BREAK": [
+    "Taking a rover break and enjoying the surroundings? 🚙🛰️",
+    "A little rover downtime before the next satellite pass? 📡🛰️",
+    "Good spot for a rover break — more grids may be waiting ahead. 🚙",
+    "Stretching the legs before the next part of the rover adventure? 🛰️🚙",
+    "The rover has found a place to pause for a while. 📡"
+  ],
+  "FOOD_STOP": [
+    "A quick food stop before chasing more satellites? 🚙📡",
+    "Rover meal break? There may be more grids ahead. 🚙🛰️",
+    "A little operator refueling before the next part of the trip? 😄📡"
+  ],
+  "POSSIBLE_ACTIVATION": [
+    "Possible satellite activation? 📡🛰️",
+    "Could a satellite activation be getting underway? 🛰️📡",
+    "The rover has stopped — maybe it is time to work some satellites! 📡🛰️",
+    "No obvious pit stop nearby. Could this be a satellite operating spot? 🛰️",
+    "Stationary for a while — perhaps some satellite passes are on the menu? 📡"
+  ]
+}

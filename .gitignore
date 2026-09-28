@@ -1,0 +1,21 @@
+# Private configuration and credentials
+.env
+rover_config.json
+
+# Python environment/cache
+.venv/
+__pycache__/
+*.pyc
+
+# SatRoverWatch runtime state and generated data
+state.json
+satroverwatch.db
+logs/
+*.log
+cache/
+
+# Local/editor/OS clutter
+.DS_Store
+Thumbs.db
+*.swp
+*~
