@@ -51,6 +51,14 @@ Edit `.env` with the credentials needed by your installation, then edit `rover_c
 
 At minimum, APRS polling requires `APRSFI_API_KEY`. X publishing uses the four X OAuth values and `X_POSTING_ENABLED`. Protected-X intent classification also requires `OPENAI_API_KEY`.
 
+## Accounts, credentials, and service costs
+
+SatRoverWatch is open-source software, but it does not provide hosted accounts, API access, credentials, or paid third-party services. Anyone operating their own installation is responsible for obtaining and configuring their own accounts, API keys, access tokens, and other credentials, and for any fees associated with those services.
+
+Credentials for the official SatRoverWatch installation, including its X, OpenAI/xAI, email, GitHub, and any future messaging-provider accounts, are private and are not included with the software. Do not configure another installation to use SatRoverWatch's accounts, identity, or credentials.
+
+Private credentials belong in `.env` or other private configuration files and must not be committed to Git.
+
 ## Rover configuration
 
 `rover_config.json` contains rover-specific settings and is never intended for Git. A rover entry includes its display callsign, APRS callsign/SSID, enable state, optional X identity and protected-timeline permission, and optional home geofence.
@@ -91,3 +99,9 @@ Review the terms, usage policies, and rate limits of external services before op
 ## Project status
 
 SatRoverWatch is still under active development. The current architecture has been field-tested as a single-rover watcher, but additional testing and cleanup should accompany any expansion to simultaneous multi-rover operation.
+
+## License
+
+SatRoverWatch source code is released under the MIT License. See `LICENSE` for the full license terms.
+
+Copyright (c) 2026 Mitch Ahrenstorff (AD0HJ).
