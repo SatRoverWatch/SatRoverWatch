@@ -37,19 +37,180 @@ Runtime files such as `.env`, `rover_config.json`, `state.json`, `satroverwatch.
 
 ## Installation
 
-Python 3.11+ is recommended. From the project directory:
+Python 3.11+ is recommended. The dedicated Raspberry Pi deployment has been tested on a Raspberry Pi 5 with Python 3.13. The examples below install SatRoverWatch in `/opt/satroverwatch` and run it as a dedicated `satroverwatch` user.
+
+### 1. Clone the repository
+
+Clone the repository into `/opt/satroverwatch`, then make the dedicated service account the owner of the working tree. Substitute the repository URL for your installation as needed.
+
+```bash
+sudo mkdir -p /opt/satroverwatch
+sudo chown satroverwatch:satroverwatch /opt/satroverwatch
+git clone <repository-url> /opt/satroverwatch
+cd /opt/satroverwatch
+```
+
+### 2. Create the Python virtual environment
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-cp rover_config.example.json rover_config.json
+python -m pip install -r requirements.txt
 ```
 
-Edit `.env` with the credentials needed by your installation, then edit `rover_config.json` for the rover you have permission to monitor. Keep both files private.
+An optional import test verifies the principal dependencies:
 
-At minimum, APRS polling requires `APRSFI_API_KEY`. X publishing uses the four X OAuth values and `X_POSTING_ENABLED`. Protected-X intent classification also requires `OPENAI_API_KEY`.
+```bash
+python -c "from PIL import Image; from dotenv import load_dotenv; import requests, requests_oauthlib, skyfield; print('SatRoverWatch dependencies OK')"
+```
+
+The production `systemd` service invokes `.venv/bin/python` directly, so activating the virtual environment is not required when the service runs.
+
+### 3. Create the private configuration
+
+```bash
+cp .env.example .env
+cp rover_config.example.json rover_config.json
+chmod 600 .env rover_config.json
+```
+
+Edit `.env` with the credentials and settings needed by your installation, then edit `rover_config.json` for a rover you have permission to monitor. Both files are intentionally ignored by Git and must remain private.
+
+At minimum, APRS polling requires `APRSFI_API_KEY`. X publishing uses the four X OAuth values and `X_POSTING_ENABLED`. Protected-X intent classification also requires `OPENAI_API_KEY`; `OPENAI_INTENT_MODEL` selects the model used for that classification.
+
+Before commissioning, confirm the private files are ignored:
+
+```bash
+git status --short --ignored
+```
+
+The output should show `.env` and `rover_config.json` with the `!!` ignored-file marker. Do not commit either file.
+
+### 4. Commission the installation safely
+
+Keep X publishing disabled during initial testing:
+
+```text
+X_POSTING_ENABLED=false
+```
+
+First run the watcher with all rover entries set to `"enabled": false`. A healthy installation will load the configuration and exit safely with:
+
+```text
+ROVER TRACKING: No rover is enabled in rover_config.json.
+```
+
+For a live end-to-end test, enable one authorized rover while leaving `X_POSTING_ENABLED=false`, then run:
+
+```bash
+./.venv/bin/python satroverwatch.py
+```
+
+A successful live run should query APRS.fi, process the rover state, create or update `satroverwatch.db`, and save `state.json` without publishing to X. Run it a second time to verify persistent state and duplicate APRS-position handling. Restore the rover's intended enable state and production X-posting setting after commissioning.
+
+For a syntax-only check, use:
+
+```bash
+./.venv/bin/python -m py_compile satroverwatch.py map_generator.py pass_predictor.py
+```
+
+### 5. Install the `systemd` service
+
+SatRoverWatch performs one monitoring cycle and exits, so the Raspberry Pi deployment uses a `Type=oneshot` service rather than a continuously running process.
+
+Create `/etc/systemd/system/satroverwatch.service`:
+
+```ini
+[Unit]
+Description=SatRoverWatch amateur radio satellite rover watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=satroverwatch
+Group=satroverwatch
+WorkingDirectory=/opt/satroverwatch
+ExecStart=/opt/satroverwatch/.venv/bin/python /opt/satroverwatch/satroverwatch.py
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Reload and validate the unit:
+
+```bash
+sudo systemctl daemon-reload
+systemd-analyze verify /etc/systemd/system/satroverwatch.service
+```
+
+Test one service invocation before installing the timer:
+
+```bash
+sudo systemctl start satroverwatch.service
+systemctl status satroverwatch.service --no-pager
+journalctl -u satroverwatch.service -n 30 --no-pager
+```
+
+After a successful oneshot run, `systemctl status` normally reports the service as `inactive (dead)` because the program has completed and exited. The journal should show a successful execution rather than a service failure.
+
+### 6. Install the five-minute `systemd` timer
+
+Create `/etc/systemd/system/satroverwatch.timer`:
+
+```ini
+[Unit]
+Description=Run SatRoverWatch every five minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=1s
+Persistent=true
+Unit=satroverwatch.service
+
+[Install]
+WantedBy=timers.target
+```
+
+Reload and validate both units:
+
+```bash
+sudo systemctl daemon-reload
+systemd-analyze verify /etc/systemd/system/satroverwatch.service /etc/systemd/system/satroverwatch.timer
+```
+
+Enable and start the **timer**, not the oneshot service:
+
+```bash
+sudo systemctl enable --now satroverwatch.timer
+```
+
+Verify the schedule and subsequent unattended runs:
+
+```bash
+systemctl status satroverwatch.timer --no-pager
+systemctl list-timers satroverwatch.timer --no-pager
+journalctl -u satroverwatch.service -n 30 --no-pager
+```
+
+The timer should report `active (waiting)` and trigger `satroverwatch.service` approximately every five minutes. When no rover is enabled, each scheduled run exits safely after reporting that no rover is enabled.
+
+### Updating an existing Raspberry Pi installation
+
+Runtime state and private configuration live outside Git tracking. When updating source, preserve `.env`, `rover_config.json`, `state.json`, and `satroverwatch.db`; do not delete the database merely to refresh the application code.
+
+After pulling source changes, update dependencies if `requirements.txt` changed and restart/reload only what is necessary:
+
+```bash
+cd /opt/satroverwatch
+git pull
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+sudo systemctl daemon-reload
+```
+
+If the `systemd` unit files themselves have not changed, the enabled timer will continue launching the updated code on its normal schedule.
 
 ## Accounts, credentials, and service costs
 
