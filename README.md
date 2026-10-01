@@ -37,18 +37,57 @@ Runtime files such as `.env`, `rover_config.json`, `state.json`, `satroverwatch.
 
 ## Installation
 
-Python 3.11+ is recommended. The dedicated Raspberry Pi deployment has been tested on a Raspberry Pi 5 with Python 3.13. The examples below install SatRoverWatch in `/opt/satroverwatch` and run it as a dedicated `satroverwatch` user.
+Python 3.11+ is recommended. The dedicated Raspberry Pi deployment has been tested on a Raspberry Pi 5 with Python 3.13. The examples below install SatRoverWatch in `/opt/satroverwatch` and run it under the `ad0hj` account used by the dedicated Raspberry Pi deployment.
 
-### 1. Clone the repository
+### 1. Install Git and clone the repository
 
-Clone the repository into `/opt/satroverwatch`, then make the dedicated service account the owner of the working tree. Substitute the repository URL for your installation as needed.
+A clean Raspberry Pi OS Lite installation may not include Git. Install it first:
+
+```bash
+sudo apt update
+sudo apt install -y git
+```
+
+For the dedicated Raspberry Pi deployment, create the working directory and make the `ad0hj` account its owner:
 
 ```bash
 sudo mkdir -p /opt/satroverwatch
-sudo chown satroverwatch:satroverwatch /opt/satroverwatch
-git clone <repository-url> /opt/satroverwatch
+sudo chown ad0hj:ad0hj /opt/satroverwatch
+```
+
+If the repository is private, configure GitHub SSH authentication before cloning. Generate an SSH key for the Pi account:
+
+```bash
+ssh-keygen -t ed25519 -C "your-github-email@example.com"
+cat ~/.ssh/id_ed25519.pub
+```
+
+Add the displayed public key to the appropriate GitHub account as an **Authentication Key**, then verify access:
+
+```bash
+ssh -T git@github.com
+```
+
+On the first connection, verify and accept GitHub's host key when prompted. A successful test reports that authentication succeeded and that GitHub does not provide shell access.
+
+Configure the Git identity that will be recorded on commits created from this Raspberry Pi. SSH authentication grants repository access, but it does not configure the commit author identity:
+
+```bash
+git config --global user.name "Your Name"
+git config --global user.email "your-github-email@example.com"
+git config --global --list
+```
+
+Use the name and email address you want associated with commits from this installation. This step prevents Git from stopping the first commit with an `Author identity unknown` error.
+
+Clone SatRoverWatch over SSH and enter the working tree:
+
+```bash
+git clone git@github.com:SatRoverWatch/SatRoverWatch.git /opt/satroverwatch
 cd /opt/satroverwatch
 ```
+
+For a fork or another installation, substitute the appropriate repository URL. GitHub does not support account-password authentication for Git operations over HTTPS; use SSH authentication or another GitHub-supported credential method.
 
 ### 2. Create the Python virtual environment
 
@@ -76,7 +115,7 @@ chmod 600 .env rover_config.json
 
 Edit `.env` with the credentials and settings needed by your installation, then edit `rover_config.json` for a rover you have permission to monitor. Both files are intentionally ignored by Git and must remain private.
 
-At minimum, APRS polling requires `APRSFI_API_KEY`. X publishing uses the four X OAuth values and `X_POSTING_ENABLED`. Protected-X intent classification also requires `OPENAI_API_KEY`; `OPENAI_INTENT_MODEL` selects the model used for that classification.
+At minimum, APRS polling requires `APRSFI_API_KEY`. X publishing uses the four X OAuth values and `X_POSTING_ENABLED`. Protected-X intent classification also requires `OPENAI_API_KEY`; `OPENAI_INTENT_MODEL` selects the model used for that classification. The current example configuration uses `OPENAI_INTENT_MODEL=gpt-5.6-luna`.
 
 Before commissioning, confirm the private files are ignored:
 
@@ -128,8 +167,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=satroverwatch
-Group=satroverwatch
+User=ad0hj
+Group=ad0hj
 WorkingDirectory=/opt/satroverwatch
 ExecStart=/opt/satroverwatch/.venv/bin/python /opt/satroverwatch/satroverwatch.py
 
