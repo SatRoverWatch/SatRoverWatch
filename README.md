@@ -4,6 +4,12 @@ SatRoverWatch is an amateur-radio satellite rover monitoring and alert service. 
 
 The current watcher intentionally processes **one enabled rover per run**. The configuration format already uses a rover list so the software can be extended to simultaneous multi-rover operation later without putting rover-specific data in the public source.
 
+## Why SatRoverWatch?
+
+Satellite roving can be difficult for other operators to follow in real time. SatRoverWatch is intended to give an opted-in rover more visibility by turning APRS position data into useful, shareable context such as Maidenhead grid transitions, maps, weather context, and upcoming satellite passes when appropriate.
+
+The project is also intended as a community experiment. Because the source is open, amateur-radio satellite operators can inspect how the system works, run their own instance, adapt it to their needs, suggest features, report problems, and contribute improvements. You do not need to be a programmer to contribute useful feedback.
+
 ## What it does
 
 - Polls APRS.fi for the configured rover's latest position, speed, course, and timestamp.
@@ -37,7 +43,7 @@ Runtime files such as `.env`, `rover_config.json`, `state.json`, `satroverwatch.
 
 ## Installation
 
-Python 3.11+ is recommended. The dedicated Raspberry Pi deployment has been tested on a Raspberry Pi 5 with Python 3.13. The examples below install SatRoverWatch in `/opt/satroverwatch` and run it under the `ad0hj` account used by the dedicated Raspberry Pi deployment.
+Python 3.11+ is recommended. The reference deployment has been tested on a Raspberry Pi 5 with Python 3.13. The examples below install SatRoverWatch in `/opt/satroverwatch`. Substitute your own Linux username where `<linux-user>` appears.
 
 ### 1. Install Git and clone the repository
 
@@ -48,46 +54,21 @@ sudo apt update
 sudo apt install -y git
 ```
 
-For the dedicated Raspberry Pi deployment, create the working directory and make the `ad0hj` account its owner:
+Create the working directory and make your Linux account its owner. Replace `<linux-user>` with the account that will run SatRoverWatch:
 
 ```bash
 sudo mkdir -p /opt/satroverwatch
-sudo chown ad0hj:ad0hj /opt/satroverwatch
+sudo chown <linux-user>:<linux-user> /opt/satroverwatch
 ```
 
-If the repository is private, configure GitHub SSH authentication before cloning. Generate an SSH key for the Pi account:
+Clone the public SatRoverWatch repository and enter the working tree:
 
 ```bash
-ssh-keygen -t ed25519 -C "your-github-email@example.com"
-cat ~/.ssh/id_ed25519.pub
-```
-
-Add the displayed public key to the appropriate GitHub account as an **Authentication Key**, then verify access:
-
-```bash
-ssh -T git@github.com
-```
-
-On the first connection, verify and accept GitHub's host key when prompted. A successful test reports that authentication succeeded and that GitHub does not provide shell access.
-
-Configure the Git identity that will be recorded on commits created from this Raspberry Pi. SSH authentication grants repository access, but it does not configure the commit author identity:
-
-```bash
-git config --global user.name "Your Name"
-git config --global user.email "your-github-email@example.com"
-git config --global --list
-```
-
-Use the name and email address you want associated with commits from this installation. This step prevents Git from stopping the first commit with an `Author identity unknown` error.
-
-Clone SatRoverWatch over SSH and enter the working tree:
-
-```bash
-git clone git@github.com:SatRoverWatch/SatRoverWatch.git /opt/satroverwatch
+git clone https://github.com/SatRoverWatch/SatRoverWatch.git /opt/satroverwatch
 cd /opt/satroverwatch
 ```
 
-For a fork or another installation, substitute the appropriate repository URL. GitHub does not support account-password authentication for Git operations over HTTPS; use SSH authentication or another GitHub-supported credential method.
+No GitHub account is required simply to clone the public repository. If you plan to contribute changes through GitHub, see **Contributing and feedback** below for optional Git identity and SSH setup.
 
 ### 2. Create the Python virtual environment
 
@@ -167,8 +148,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=ad0hj
-Group=ad0hj
+User=<linux-user>
+Group=<linux-user>
 WorkingDirectory=/opt/satroverwatch
 ExecStart=/opt/satroverwatch/.venv/bin/python /opt/satroverwatch/satroverwatch.py
 
@@ -295,6 +276,27 @@ Do not delete an existing production `satroverwatch.db` merely when updating sou
 Position data is obtained through the APRS.fi API. Base-map imagery is retrieved from OpenStreetMap and generated maps retain OpenStreetMap contributor attribution. Satellite GP data is obtained from CelesTrak. U.S. weather context uses the National Weather Service.
 
 Review the terms, usage policies, and rate limits of external services before operating a public or higher-volume deployment.
+
+## Contributing and feedback
+
+SatRoverWatch welcomes community participation. Useful contributions include feature requests, bug reports, field-testing results, documentation corrections, review of APRS/grid/pass logic, and source-code improvements. You do not need to write code to help improve the project.
+
+For code contributions, fork the repository on GitHub, make changes in your fork, and submit a pull request. Configure a Git author identity on systems where you create commits:
+
+```bash
+git config --global user.name "Your Name"
+git config --global user.email "your-github-email@example.com"
+```
+
+If you prefer GitHub SSH authentication for pushing changes, generate a key, add the public key to your GitHub account, and verify authentication:
+
+```bash
+ssh-keygen -t ed25519 -C "your-github-email@example.com"
+cat ~/.ssh/id_ed25519.pub
+ssh -T git@github.com
+```
+
+Please keep credentials, private rover configuration, runtime databases, and other operational data out of commits and pull requests.
 
 ## Project status
 
