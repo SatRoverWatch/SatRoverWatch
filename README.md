@@ -1,6 +1,6 @@
 # SatRoverWatch
 
-SatRoverWatch is an amateur-radio satellite rover monitoring and alert service. It monitors an opted-in rover through APRS.fi, calculates Maidenhead locators, records position history, detects useful rover events, calculates amateur-satellite passes, generates deterministic OpenStreetMap graphics, and can publish alerts to X.
+SatRoverWatch is an amateur-radio satellite rover monitoring and alert service. It monitors an opted-in rover through APRS.fi, calculates Maidenhead locators, records position history, detects useful rover events, calculates amateur-satellite passes, generates deterministic OpenStreetMap graphics, can publish alerts to X, and supports optional Textbelt SMS notifications for possible satellite activations.
 
 The current watcher intentionally processes **one enabled rover per run**. The configuration format already uses a rover list so the software can be extended to simultaneous multi-rover operation later without putting rover-specific data in the public source.
 
@@ -22,10 +22,11 @@ The project is also intended as a community experiment. Because the source is op
 - Generates deterministic location and recent-track maps; AI is not used to determine geography, rover position, grid boundaries, or satellite visibility.
 - Can inspect an opted-in rover's X timeline and use OpenAI only to conservatively classify whether a post explicitly describes a current or future satellite operation. Deterministic pass validation remains authoritative and ambiguous cases fail closed.
 - Can publish event alerts to X. Posting has a separate global safety switch in `.env`.
+- Can send optional Textbelt SMS notifications when a confirmed stationary stop is classified as a possible satellite activation and qualifying passes are available. Messages include the rover callsign, 6-character Maidenhead locator(s), and up to five satellite passes in UTC.
 
 ## Planned enhancements
 
-- **Rover-configurable direct notifications** — allow an opted-in rover to select which events should generate a direct phone notification, such as a Maidenhead grid change or an approaching pass of a preferred satellite. A dedicated SMS provider such as Twilio is being considered so notifications can reach the rover through the phone's normal messaging system and be available to hands-free systems such as CarPlay.
+- **Additional rover-configurable direct notifications** — expand beyond the initial Textbelt possible-activation SMS to support selectable events, such as Maidenhead grid changes or approaching passes of preferred satellites.
 - **Preferred-satellite alerts** — allow each rover to maintain its own preferred satellite list (for example, FO-29 or RS-44) and request advance notification when a qualifying pass is approaching.
 - Notification destinations, phone numbers, provider credentials, and rover preferences will remain private configuration and will not be stored in the public repository.
 
@@ -34,6 +35,7 @@ The project is also intended as a community experiment. Because the source is op
 - `satroverwatch.py` — main watcher and event logic.
 - `map_generator.py` — deterministic OpenStreetMap and recent-track map generation.
 - `pass_predictor.py` — satellite pass calculations.
+- `sms_notifier.py` — Textbelt SMS notification helper, including safe test-mode support.
 - `messages.json` — editable public message pools.
 - `rover_config.example.json` — safe example of the private rover configuration schema.
 - `.env.example` — safe credential/configuration template.
@@ -96,7 +98,7 @@ chmod 600 .env rover_config.json
 
 Edit `.env` with the credentials and settings needed by your installation, then edit `rover_config.json` for a rover you have permission to monitor. Both files are intentionally ignored by Git and must remain private.
 
-At minimum, APRS polling requires `APRSFI_API_KEY`. X publishing uses the four X OAuth values and `X_POSTING_ENABLED`. Protected-X intent classification also requires `OPENAI_API_KEY`; `OPENAI_INTENT_MODEL` selects the model used for that classification. The current example configuration uses `OPENAI_INTENT_MODEL=gpt-5.6-luna`.
+At minimum, APRS polling requires `APRSFI_API_KEY`. X publishing uses the four X OAuth values and `X_POSTING_ENABLED`. Protected-X intent classification also requires `OPENAI_API_KEY`; `OPENAI_INTENT_MODEL` selects the model used for that classification. The current example configuration uses `OPENAI_INTENT_MODEL=gpt-5.6-luna`. Optional SMS delivery uses `TEXTBELT_API_KEY` and `SMS_LIVE_ENABLED`; see **SMS notifications** below.
 
 Before commissioning, confirm the private files are ignored:
 
@@ -108,10 +110,11 @@ The output should show `.env` and `rover_config.json` with the `!!` ignored-file
 
 ### 4. Commission the installation safely
 
-Keep X publishing disabled during initial testing:
+Keep X publishing and live SMS delivery disabled during initial testing:
 
 ```text
 X_POSTING_ENABLED=false
+SMS_LIVE_ENABLED=false
 ```
 
 First run the watcher with all rover entries set to `"enabled": false`. A healthy installation will load the configuration and exit safely with:
@@ -131,7 +134,7 @@ A successful live run should query APRS.fi, process the rover state, create or u
 For a syntax-only check, use:
 
 ```bash
-./.venv/bin/python -m py_compile satroverwatch.py map_generator.py pass_predictor.py
+./.venv/bin/python -m py_compile satroverwatch.py map_generator.py pass_predictor.py sms_notifier.py
 ```
 
 ### 5. Install the `systemd` service
@@ -236,21 +239,53 @@ If the `systemd` unit files themselves have not changed, the enabled timer will 
 
 SatRoverWatch is open-source software, but it does not provide hosted accounts, API access, credentials, or paid third-party services. Anyone operating their own installation is responsible for obtaining and configuring their own accounts, API keys, access tokens, and other credentials, and for any fees associated with those services.
 
-Credentials for the official SatRoverWatch installation, including its X, OpenAI/xAI, email, GitHub, and any future messaging-provider accounts, are private and are not included with the software. Do not configure another installation to use SatRoverWatch's accounts, identity, or credentials.
+Credentials for the official SatRoverWatch installation, including its X, OpenAI/xAI, email, GitHub, and Textbelt accounts, are private and are not included with the software. Do not configure another installation to use SatRoverWatch's accounts, identity, or credentials.
 
 Private credentials belong in `.env` or other private configuration files and must not be committed to Git.
 
 ## Rover configuration
 
-`rover_config.json` contains rover-specific settings and is never intended for Git. A rover entry includes its display callsign, APRS callsign/SSID, enable state, optional X identity and protected-timeline permission, and optional home geofence.
+`rover_config.json` contains rover-specific settings and is never intended for Git. A rover entry includes its display callsign, APRS callsign/SSID, enable state, optional X identity and protected-timeline permission, optional home geofence, and optional SMS settings.
 
 Only a literal JSON `true` for `enabled` activates a rover. If no rover is enabled, the watcher exits safely before normal monitoring. This version also exits with an error if more than one rover is enabled, because simultaneous multi-rover processing has not yet been implemented.
 
 The optional home geofence should use an appropriately coarse center/radius. Public posts should not disclose a private residence or exact home coordinates.
 
+## SMS notifications
+
+SatRoverWatch supports optional **Textbelt SMS notifications** for an opted-in rover. SMS is considered only after the watcher confirms a stationary/idle stop, classifies it as `POSSIBLE_ACTIVATION` rather than an ordinary travel stop, and obtains qualifying satellite passes. A nearby food, fuel, lodging, or other recognized break stop does not trigger a possible-activation SMS.
+
+An SMS includes the rover's callsign, its six-character Maidenhead locator, and up to five qualifying satellite passes with UTC timing and maximum elevation. A pass already in progress is marked `NOW` and includes its calculated LOS time. When the APRS coordinate is within **100 meters of a four-character Maidenhead grid boundary**, the message includes the six-character locators for both sides; near a four-grid intersection it can include four locators. The message uses plain ASCII to avoid Unicode SMS encoding penalties.
+
+### Configure Textbelt and a rover
+
+Obtain your own Textbelt API key and put it in the private `.env` file:
+
+```dotenv
+TEXTBELT_API_KEY=your-own-textbelt-key
+SMS_LIVE_ENABLED=false
+```
+
+In the private `rover_config.json`, add the following fields **inside the opted-in rover's object** (as shown in `rover_config.example.json`):
+
+```json
+"sms": {
+  "enabled": false,
+  "phone_number": ""
+}
+```
+
+Set `sms.enabled` to `true` and supply the authorized recipient's phone number when that rover should be eligible for SMS. Keep real phone numbers, API keys, and the private configuration out of Git.
+
+### Test mode, live delivery, and duplicate protection
+
+`SMS_LIVE_ENABLED=false` is the safe default, including when the variable is absent. With SMS enabled for a rover but live mode disabled, the watcher uses Textbelt's test mode rather than delivering a real text. **Only set `SMS_LIVE_ENABLED=true` in the private `.env` after testing and explicitly deciding to allow real, potentially billable SMS delivery.** Textbelt credits and provider limits are the operator's responsibility.
+
+The watcher records `last_sms_event_key` in private `state.json` after Textbelt accepts a notification, to avoid repeating an SMS for the same detected stop. This is separate from X-post deduplication. SMS delivery is optional; a notification failure is logged without intentionally stopping the watcher.
+
 ## Publishing safety
 
-`X_POSTING_ENABLED=false` is the safe default in `.env.example`. Keep it false while testing a new installation. Monitoring and X publishing are separate controls: `rover_config.json` determines whether the rover is monitored, while `.env` determines whether the installation may publish to X.
+`X_POSTING_ENABLED=false` is the safe default in `.env.example`. Keep it false while testing a new installation. Monitoring, X publishing, and SMS delivery have separate controls: `rover_config.json` determines whether a rover is monitored and eligible for SMS, while `.env` controls whether X posts and real SMS messages are permitted.
 
 Protected X content is not copied into public posts. The intent classifier extracts only structured operational facts and does not calculate passes or geography. If classification or deterministic validation fails, no relay is attempted.
 
@@ -259,7 +294,7 @@ Protected X content is not copied into public posts. The intent classifier extra
 For a manual test:
 
 ```bash
-./.venv/bin/python -m py_compile satroverwatch.py map_generator.py pass_predictor.py
+./.venv/bin/python -m py_compile satroverwatch.py map_generator.py pass_predictor.py sms_notifier.py
 ./.venv/bin/python satroverwatch.py
 ```
 

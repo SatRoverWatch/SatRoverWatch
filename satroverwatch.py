@@ -20,6 +20,7 @@ from map_generator import (
     generate_rover_map,
     generate_recent_track_map,
 )
+from sms_notifier import SMSConfigurationError, send_sms
 from pass_predictor import (
     PASS_SATELLITES,
     get_qualifying_passes,
@@ -43,6 +44,7 @@ MOVING_SPEED_KMH = 5.0
 IDLE_RADIUS_METERS = 250.0
 IDLE_CONFIRM_MINUTES = 10
 POSSIBLE_ACTIVATION_REPORTS = 2
+SMS_GRID_BOUNDARY_METERS = 100.0
 
 # A stopped/slow final APRS packet followed by silence can be recognized as
 # quiet time when mapped lodging is very close to the final coordinate.
@@ -138,6 +140,8 @@ HOME_ARRIVAL_MESSAGE = str(
 )
 
 load_dotenv(ENV_FILE)
+# Safety default: SMS test mode; explicit opt-in required for billable live SMS.
+SMS_LIVE_ENABLED = os.getenv("SMS_LIVE_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 
 APRSFI_API_KEY = os.getenv("APRSFI_API_KEY")
 
@@ -377,6 +381,81 @@ def distance_meters(lat1, lon1, lat2, lon2):
     )
 
     return earth_radius_m * c
+
+
+def sms_boundary_grids(latitude, longitude, tolerance_m=SMS_GRID_BOUNDARY_METERS):
+    """One, two or four 6-character locators near 4-character grid lines.
+
+    Boundary candidates are determined using physical distances, not decimal
+    rounding. Coordinates on each side are sampled just inside the relevant
+    4-character square, so the 6-character locator is valid for that square.
+    """
+    lat = float(latitude)
+    lon = float(longitude)
+    # Four-character squares are 1 degree latitude by 2 degrees longitude.
+    south = math.floor(lat + 90.0) - 90.0
+    west = math.floor((lon + 180.0) / 2.0) * 2.0 - 180.0
+    north = south + 1.0
+    east = west + 2.0
+    south_dist = distance_meters(lat, lon, south, lon)
+    north_dist = distance_meters(lat, lon, north, lon)
+    west_dist = distance_meters(lat, lon, lat, west)
+    east_dist = distance_meters(lat, lon, lat, east)
+    latitude_offsets = [0]
+    longitude_offsets = [0]
+    if south_dist <= tolerance_m:
+        latitude_offsets.append(-1)
+    elif north_dist <= tolerance_m:
+        latitude_offsets.append(1)
+    if west_dist <= tolerance_m:
+        longitude_offsets.append(-1)
+    elif east_dist <= tolerance_m:
+        longitude_offsets.append(1)
+
+    # At the actual boundary, a small displacement to the centerward side
+    # avoids floating-point ambiguity. Sample 10 m from each selected line.
+    delta_lat = 10.0 / 111195.0
+    cos_lat = max(0.01, abs(math.cos(math.radians(lat))))
+    delta_lon = 10.0 / (111195.0 * cos_lat)
+    grids = []
+    for lat_side in latitude_offsets:
+        for lon_side in longitude_offsets:
+            sample_lat = lat
+            sample_lon = lon
+            if lat_side == -1:
+                sample_lat = south - delta_lat
+            elif lat_side == 1:
+                sample_lat = north + delta_lat
+            elif south_dist <= tolerance_m:
+                sample_lat = south + delta_lat
+            elif north_dist <= tolerance_m:
+                sample_lat = north - delta_lat
+            if lon_side == -1:
+                sample_lon = west - delta_lon
+            elif lon_side == 1:
+                sample_lon = east + delta_lon
+            elif west_dist <= tolerance_m:
+                sample_lon = west + delta_lon
+            elif east_dist <= tolerance_m:
+                sample_lon = east - delta_lon
+            if -90 <= sample_lat < 90:
+                locator = maidenhead6(sample_lat, ((sample_lon + 180) % 360) - 180)
+                if locator not in grids:
+                    grids.append(locator)
+    return grids
+
+
+def format_activation_sms(callsign, latitude, longitude, passes, calculation_time):
+    """Plain ASCII to avoid Unicode SMS segmentation penalties."""
+    grids = '/'.join(sms_boundary_grids(latitude, longitude))
+    lines = [f"SatRoverWatch {callsign}", f"Grid: {grids}", "Next 5 passes UTC:"]
+    for item in (passes or [])[:5]:
+        if item.get("in_progress") and item["los"] > calculation_time:
+            timing = f"NOW LOS {item['los'].strftime('%H:%M')}"
+        else:
+            timing = item["aos"].strftime('%H:%M')
+        lines.append(f"{item['satellite']} {timing} {item['max_elevation']:.0f}deg")
+    return '\n'.join(lines)
 
 
 def reverse_geocode_county(latitude, longitude):
@@ -1690,6 +1769,8 @@ previous_latitude = previous_state.get("latitude")
 previous_longitude = previous_state.get("longitude")
 previous_speed = previous_state.get("speed_kmh")
 
+previous_sms_event_key = previous_state.get("last_sms_event_key")
+
 previous_x_event_key = previous_state.get(
     "last_x_event_key"
 )
@@ -2103,6 +2184,7 @@ else:
 print()
 print("EVENTS:")
 
+new_sms_event_key = previous_sms_event_key
 new_x_event_key = previous_x_event_key
 new_x_post_id = previous_x_post_id
 new_idle_message = previous_idle_message
@@ -2400,6 +2482,7 @@ elif new_report:
             idle_message = choose_idle_message(idle_category, previous_idle_message)
 
             ordinary_stop = ordinary_stop_feature(nearby_features)
+            activation_passes = None
             if ordinary_stop:
                 print()
                 print(
@@ -2455,6 +2538,39 @@ elif new_report:
             print()
             print("IDLE EVENT KEY:")
             print(idle_event_key)
+
+            # SMS is independent of X posting and only applies to a possible
+            # activation with actual qualifying pass data. Never send for
+            # food, fuel, lodging or scenic-break classifications.
+            sms_config = ROVER_CONFIG.get("sms") or {}
+            sms_mode = "live" if SMS_LIVE_ENABLED else "test"
+            sms_event_key = f"{idle_event_key}:sms:{sms_mode}"
+            if (
+                idle_category == "POSSIBLE_ACTIVATION"
+                and activation_passes
+                and isinstance(sms_config, dict)
+                and sms_config.get("enabled") is True
+            ):
+                if sms_event_key == previous_sms_event_key:
+                    print("SMS: This stop was already notified; skipping duplicate.")
+                else:
+                    sms_message = format_activation_sms(
+                        CALLSIGN, latitude, longitude, activation_passes, now
+                    )
+                    print(f"SMS: Sending {sms_mode}-mode activation notification.")
+                    try:
+                        sms_result = send_sms(CALLSIGN, sms_message, live=SMS_LIVE_ENABLED)
+                        if sms_result.get("success"):
+                            new_sms_event_key = sms_event_key
+                            print("SMS: Textbelt accepted the notification.")
+                            if sms_result.get("quotaRemaining") is not None:
+                                print(f"SMS: Credits remaining: {sms_result['quotaRemaining']}")
+                        else:
+                            print(f"SMS: Notification failed: {sms_result.get('error')}")
+                    except SMSConfigurationError as exc:
+                        print(f"SMS: Configuration problem: {exc}")
+                    except Exception as exc:
+                        print(f"SMS: Unexpected error ({type(exc).__name__}); watcher continues.")
 
             if idle_event_key == previous_x_event_key:
 
@@ -2715,6 +2831,7 @@ state = {
     "idle_candidate_start_timestamp": idle_candidate_start,
     "idle_since_timestamp": idle_since,
     "idle_report_count": idle_report_count,
+    "last_sms_event_key": new_sms_event_key,
     "last_x_event_key": new_x_event_key,
     "last_x_post_id": new_x_post_id,
     "last_idle_message": new_idle_message,

@@ -14,6 +14,10 @@
         "longitude": 0.0,
         "radius_km": 10.0,
         "arrival_message": "N0CALL has returned home from the rover trip. 📡🚙"
+      },
+      "sms": {
+        "enabled": false,
+        "phone_number": ""
       }
     }
   ]
