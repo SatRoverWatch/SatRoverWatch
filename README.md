@@ -333,6 +333,10 @@ ssh -T git@github.com
 
 Please keep credentials, private rover configuration, runtime databases, and other operational data out of commits and pull requests.
 
+## Remove SatRoverWatch
+
+To remove SatRoverWatch from Raspberry Pi OS, Debian, or Ubuntu, see [UNINSTALL.md](UNINSTALL.md).
+
 ## Project status
 
 SatRoverWatch is still under active development. The current architecture has been field-tested as a single-rover watcher, but additional testing and cleanup should accompany any expansion to simultaneous multi-rover operation.
