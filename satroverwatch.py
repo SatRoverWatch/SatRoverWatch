@@ -5,6 +5,8 @@ import os
 import random
 import re
 import sqlite3
+import subprocess
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -90,13 +92,13 @@ ROVER_CONFIG_FILE = PROJECT_DIR / "rover_config.json"
 
 
 def load_rover_config():
-    """Load one enabled rover from the private rover configuration."""
+    """Load one rover, or dispatch one isolated process per enabled rover."""
     try:
         with ROVER_CONFIG_FILE.open("r", encoding="utf-8") as file:
             config = json.load(file)
     except FileNotFoundError:
         raise SystemExit(
-            f"ERROR: Private rover configuration not found: {ROVER_CONFIG_FILE}\n"
+            f"ERROR: Private rover configuration not found: {ROVER_CONFIG_FILE}\\n"
             "Copy rover_config.example.json to rover_config.json and configure it."
         )
     except (OSError, json.JSONDecodeError) as exc:
@@ -106,17 +108,63 @@ def load_rover_config():
     if not isinstance(rovers, list) or not rovers:
         raise SystemExit("ERROR: rover_config.json must contain a non-empty 'rovers' list.")
 
-    enabled = [rover for rover in rovers if isinstance(rover, dict) and rover.get("enabled") is True]
+    enabled = [
+        rover for rover in rovers
+        if isinstance(rover, dict) and rover.get("enabled") is True
+    ]
     if not enabled:
         print("ROVER TRACKING: No rover is enabled in rover_config.json.")
         raise SystemExit(0)
-    if len(enabled) > 1:
-        raise SystemExit(
-            "ERROR: This watcher version processes one rover per run. "
-            "Enable exactly one rover until the multi-rover loop is implemented."
-        )
 
-    rover = enabled[0]
+    # Callsigns are state keys and must be unique; duplicate names could mix
+    # event history and notifications between two configured rover entries.
+    configured_callsigns = [
+        str(rover.get("callsign", "")).strip().upper()
+        for rover in rovers if isinstance(rover, dict)
+    ]
+    configured_callsigns = [name for name in configured_callsigns if name]
+    if len(configured_callsigns) != len(set(configured_callsigns)):
+        raise SystemExit("ERROR: Each rover must have a unique callsign in rover_config.json.")
+
+    target = os.getenv("SATROVERWATCH_ROVER_CALLSIGN", "").strip().upper()
+    if not target and len(enabled) > 1:
+        print(f"ROVER TRACKING: Processing {len(enabled)} enabled rovers sequentially.")
+        failures = []
+        for rover in enabled:
+            callsign = str(rover.get("callsign", "")).strip().upper()
+            if not callsign:
+                print("ERROR: Every enabled rover requires a callsign.")
+                failures.append("<missing callsign>")
+                continue
+            child_env = os.environ.copy()
+            child_env["SATROVERWATCH_ROVER_CALLSIGN"] = callsign
+            child_env["SATROVERWATCH_MULTI_ROVER_RUN"] = "1"
+            print(f"\\n{'=' * 60}\\nROVER TRACKING: Starting {callsign}\\n{'=' * 60}", flush=True)
+            result = subprocess.run([sys.executable, str(Path(__file__).resolve())], env=child_env)
+            if result.returncode != 0:
+                failures.append(callsign)
+                print(f"ERROR: Rover {callsign} run exited with status {result.returncode}.")
+        if failures:
+            raise SystemExit(
+                "ERROR: One or more rover runs failed: " + ", ".join(failures)
+            )
+        print("ROVER TRACKING: All enabled rover runs completed.")
+        raise SystemExit(0)
+
+    if target:
+        matches = [
+            rover for rover in enabled
+            if str(rover.get("callsign", "")).strip().upper() == target
+        ]
+        if len(matches) != 1:
+            raise SystemExit(
+                f"ERROR: SATROVERWATCH_ROVER_CALLSIGN={target!r} does not identify "
+                "exactly one enabled rover."
+            )
+        rover = matches[0]
+    else:
+        rover = enabled[0]
+
     callsign = str(rover.get("callsign", "")).strip().upper()
     aprs_callsign = str(rover.get("aprs_callsign") or callsign).strip().upper()
     if not callsign or not aprs_callsign:
@@ -125,6 +173,22 @@ def load_rover_config():
 
 
 ROVER_CONFIG, CALLSIGN, APRS_CALLSIGN = load_rover_config()
+
+# Keep event history isolated per rover while sharing the SQLite history database.
+# Import a legacy single-rover state.json when a per-rover file does not yet exist.
+STATE_FILE = PROJECT_DIR / f"state_{CALLSIGN.lower()}.json"
+LEGACY_STATE_FILE = PROJECT_DIR / "state.json"
+if (not STATE_FILE.exists() and LEGACY_STATE_FILE.exists()
+        and os.getenv("SATROVERWATCH_MULTI_ROVER_RUN") != "1"):
+    try:
+        with LEGACY_STATE_FILE.open("r", encoding="utf-8") as legacy_file:
+            legacy_state = json.load(legacy_file)
+        if isinstance(legacy_state, dict):
+            with STATE_FILE.open("w", encoding="utf-8") as state_file:
+                json.dump(legacy_state, state_file, indent=4)
+            print(f"ROVER TRACKING: Migrated legacy state to {STATE_FILE.name}.")
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"WARNING: Could not migrate legacy state.json: {exc}")
 X_ROVER_HANDLE = str(ROVER_CONFIG.get("x_handle") or "").strip()
 X_ROVER_USERNAME = str(ROVER_CONFIG.get("x_username") or "").strip().lstrip("@")
 X_ROVER_POSTS_ENABLED = bool(ROVER_CONFIG.get("protected_x_intent_enabled", False))

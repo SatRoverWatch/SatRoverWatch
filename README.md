@@ -2,7 +2,7 @@
 
 SatRoverWatch is an amateur-radio satellite rover monitoring and alert service. It monitors an opted-in rover through APRS.fi, calculates Maidenhead locators, records position history, detects useful rover events, calculates amateur-satellite passes, generates deterministic OpenStreetMap graphics, can publish alerts to X, and supports optional Textbelt SMS notifications for possible satellite activations.
 
-The current watcher intentionally processes **one enabled rover per run**. The configuration format already uses a rover list so the software can be extended to simultaneous multi-rover operation later without putting rover-specific data in the public source.
+The watcher supports **multiple enabled rovers in one scheduled cycle**. It runs each enabled rover in an isolated sequential process, with per-rover event state and a shared SQLite position-history database. Rover-specific settings remain in the private `rover_config.json`.
 
 ## Why SatRoverWatch?
 
@@ -129,7 +129,7 @@ For a live end-to-end test, enable one authorized rover while leaving `X_POSTING
 ./.venv/bin/python satroverwatch.py
 ```
 
-A successful live run should query APRS.fi, process the rover state, create or update `satroverwatch.db`, and save `state.json` without publishing to X. Run it a second time to verify persistent state and duplicate APRS-position handling. Restore the rover's intended enable state and production X-posting setting after commissioning.
+A successful live run should query APRS.fi, process the rover state, create or update `satroverwatch.db`, and save per-rover state in `state_<callsign>.json` without publishing to X. Run it a second time to verify persistent state and duplicate APRS-position handling. Restore the rover's intended enable state and production X-posting setting after commissioning.
 
 For a syntax-only check, use:
 
@@ -247,7 +247,7 @@ Private credentials belong in `.env` or other private configuration files and mu
 
 `rover_config.json` contains rover-specific settings and is never intended for Git. A rover entry includes its display callsign, APRS callsign/SSID, enable state, optional X identity and protected-timeline permission, optional home geofence, and optional SMS settings.
 
-Only a literal JSON `true` for `enabled` activates a rover. If no rover is enabled, the watcher exits safely before normal monitoring. This version also exits with an error if more than one rover is enabled, because simultaneous multi-rover processing has not yet been implemented.
+Only a literal JSON `true` for `enabled` activates a rover. If no rover is enabled, the watcher exits safely. When multiple rovers are enabled, the scheduler invocation processes each rover sequentially in its own child process. Each rover gets its own `state_<callsign>.json` file so event history, duplicate detection, idle status, and notification deduplication do not bleed between rovers. All rover position records remain in the shared `satroverwatch.db`, keyed by rover/APRS callsign. Rover `callsign` values must be unique. Keep `X_POSTING_ENABLED=false` and `SMS_LIVE_ENABLED=false` while testing multiple rovers.
 
 The optional home geofence should use an appropriately coarse center/radius. Public posts should not disclose a private residence or exact home coordinates.
 
@@ -339,7 +339,7 @@ To remove SatRoverWatch from Raspberry Pi OS, Debian, or Ubuntu, see [UNINSTALL.
 
 ## Project status
 
-SatRoverWatch is still under active development. The current architecture has been field-tested as a single-rover watcher, but additional testing and cleanup should accompany any expansion to simultaneous multi-rover operation.
+SatRoverWatch is still under active development. Multi-rover cycles are processed sequentially, not in parallel, to avoid concurrent writes to shared map/cache resources. Test with publishing and live SMS disabled before enabling production notifications.
 
 ## License
 
