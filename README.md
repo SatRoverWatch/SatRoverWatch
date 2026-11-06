@@ -79,6 +79,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
+We need to make sure the Python dotenv module is installed
+
+```bash
+sudo apt install python3-dotenv
+```
 
 An optional import test verifies the principal dependencies:
 
