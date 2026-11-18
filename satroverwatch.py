@@ -22,6 +22,15 @@ from map_generator import (
     generate_rover_map,
     generate_recent_track_map,
 )
+from osm_poi import (
+    OSM_NEARBY_RADIUS_METERS,
+    ORDINARY_STOP_RADIUS_METERS,
+    LODGING_RADIUS_METERS,
+    nearby_osm_features,
+    nearby_lodging_feature,
+    ordinary_stop_feature,
+    classify_idle_context,
+)
 from sms_notifier import SMSConfigurationError, send_sms
 from pass_predictor import (
     PASS_SATELLITES,
@@ -55,12 +64,6 @@ SILENT_STOP_CONFIRM_MINUTES = 10
 # This higher threshold applies ONLY to the special case where the final
 # APRS packet is followed by silence and mapped lodging is very close.
 SILENT_STOP_MAX_SPEED_KMH = 20.0
-LODGING_RADIUS_METERS = 150
-
-OSM_NEARBY_RADIUS_METERS = 250
-# Ordinary travel-stop POIs suppress satellite-pass context only when very close.
-ORDINARY_STOP_RADIUS_METERS = 100
-ROVER_DOG_RADIUS_METERS = ORDINARY_STOP_RADIUS_METERS
 
 # Rover map image attached to location-based X posts.
 MAP_OUTPUT_WIDTH = 1200
@@ -565,246 +568,6 @@ def reverse_geocode_county(latitude, longitude):
         return f"{county}, {state}"
 
     return county or state
-
-
-def nearby_osm_features(latitude, longitude):
-    """Return useful OSM features near the rover using resilient Overpass lookups."""
-
-    # Try more than one public Overpass instance. A temporary 5xx/timeout on
-    # one server should not turn a normal fuel/food stop into an unknown stop.
-    overpass_urls = (
-        "https://overpass-api.de/api/interpreter",
-        "https://overpass.kumi.systems/api/interpreter",
-    )
-
-    # Names are deliberately NOT required. SatRoverWatch publishes only a
-    # generic nearby category, so an unnamed fuel station, restaurant, etc.
-    # is still useful evidence for classifying the stop.
-    query = f"""
-[out:json][timeout:15];
-(
-  nwr(around:{OSM_NEARBY_RADIUS_METERS},{latitude},{longitude})[tourism~"^(hotel|motel|hostel|camp_site|caravan_site|attraction|viewpoint|museum)$"];
-  nwr(around:{OSM_NEARBY_RADIUS_METERS},{latitude},{longitude})[amenity~"^(fuel|restaurant|fast_food|cafe|bar|pub|biergarten|parking)$"];
-  nwr(around:{OSM_NEARBY_RADIUS_METERS},{latitude},{longitude})[shop=convenience];
-  nwr(around:{OSM_NEARBY_RADIUS_METERS},{latitude},{longitude})[leisure~"^(park|nature_reserve|stadium|sports_centre)$"];
-  nwr(around:{OSM_NEARBY_RADIUS_METERS},{latitude},{longitude})[natural][name];
-  nwr(around:{OSM_NEARBY_RADIUS_METERS},{latitude},{longitude})[historic][name];
-);
-out center tags;
-"""
-
-    headers = {
-        "User-Agent": (
-            "SatRoverWatch/0.3 "
-            "(https://x.com/SatRoverWatch)"
-        )
-    }
-
-    data = None
-    last_error = None
-
-    for retry_round in range(1, 3):
-        for attempt, overpass_url in enumerate(overpass_urls, start=1):
-            try:
-                response = requests.post(
-                    overpass_url,
-                    data={"data": query},
-                    headers=headers,
-                    timeout=20,
-                )
-                response.raise_for_status()
-                data = response.json()
-                if attempt > 1 or retry_round > 1:
-                    print(
-                        "OpenStreetMap nearby-feature lookup succeeded "
-                        f"on retry round {retry_round}, server #{attempt}."
-                    )
-                break
-
-            except (requests.RequestException, ValueError) as exc:
-                last_error = exc
-                print(
-                    "WARNING: OpenStreetMap nearby-feature lookup failed "
-                    f"on retry round {retry_round}, server #{attempt}: {exc}"
-                )
-
-        if data is not None:
-            break
-
-        if retry_round == 1:
-            print(
-                "OpenStreetMap nearby-feature lookup: both servers failed; "
-                "waiting 10 seconds before one retry round."
-            )
-            time.sleep(10)
-
-    if data is None:
-        print(
-            "WARNING: All OpenStreetMap Overpass nearby-feature lookups failed. "
-            f"Last error: {last_error}"
-        )
-        return None
-
-    features = []
-    seen = set()
-
-    for element in data.get("elements", []):
-        tags = element.get("tags", {})
-
-        feature_lat = element.get("lat")
-        feature_lon = element.get("lon")
-
-        if feature_lat is None or feature_lon is None:
-            center = element.get("center", {})
-            feature_lat = center.get("lat")
-            feature_lon = center.get("lon")
-
-        if feature_lat is None or feature_lon is None:
-            continue
-
-        distance = distance_meters(
-            latitude,
-            longitude,
-            float(feature_lat),
-            float(feature_lon),
-        )
-
-        if distance > OSM_NEARBY_RADIUS_METERS:
-            continue
-
-        if tags.get("tourism"):
-            kind = tags["tourism"]
-        elif tags.get("amenity"):
-            kind = tags["amenity"]
-        elif tags.get("shop"):
-            kind = tags["shop"]
-        elif tags.get("leisure"):
-            kind = tags["leisure"]
-        elif tags.get("natural"):
-            kind = tags["natural"]
-        elif tags.get("historic"):
-            kind = tags["historic"]
-        else:
-            kind = "place"
-
-        name = tags.get("name") or tags.get("brand") or f"Unnamed {kind}"
-
-        # Element identity is more reliable than a name for unnamed POIs and
-        # also prevents two different unnamed features of the same kind from
-        # collapsing into one result.
-        element_type = element.get("type", "unknown")
-        element_id = element.get("id")
-        if element_id is not None:
-            key = (element_type, element_id)
-        else:
-            key = (name.casefold(), kind, round(distance, 1))
-
-        if key in seen:
-            continue
-        seen.add(key)
-
-        features.append(
-            {
-                "name": name,
-                "kind": kind,
-                "distance_m": distance,
-                "rover_dog": (
-                    tags.get("amenity") == "fuel"
-                    or tags.get("shop") == "convenience"
-                ),
-            }
-        )
-
-    features.sort(key=lambda item: item["distance_m"])
-    return features
-
-
-def nearby_lodging_feature(features, radius_m=LODGING_RADIUS_METERS):
-    """Return nearby lodging within the requested decision radius."""
-    if features is None:
-        return None
-
-    lodging_kinds = {"hotel", "motel", "hostel"}
-    return next(
-        (
-            feature
-            for feature in features
-            if feature["kind"] in lodging_kinds
-            and feature["distance_m"] <= LODGING_RADIUS_METERS
-        ),
-        None,
-    )
-
-
-def ordinary_stop_feature(features):
-    """Return a close POI that makes an ordinary travel stop the likely context."""
-    if not features:
-        return None
-
-    ordinary_kinds = {
-        "fuel", "convenience", "restaurant", "fast_food", "cafe",
-        "hotel", "motel", "hostel",
-    }
-    return next(
-        (
-            feature for feature in features
-            if feature["kind"] in ordinary_kinds
-            and feature["distance_m"] <= ORDINARY_STOP_RADIUS_METERS
-        ),
-        None,
-    )
-
-
-def classify_idle_context(features):
-    """Classify an idle stop without exposing a specific business name publicly."""
-    if features is None:
-        return None, None
-
-    break_kinds = {
-        "camp_site", "caravan_site", "park", "nature_reserve",
-        "viewpoint", "attraction", "museum",
-    }
-    food_kinds = {"restaurant", "fast_food", "cafe", "bar", "pub", "biergarten"}
-
-    rover_dog_feature = next(
-        (
-            feature for feature in features
-            if feature["rover_dog"]
-            and feature["distance_m"] <= ROVER_DOG_RADIUS_METERS
-        ),
-        None,
-    )
-    if rover_dog_feature:
-        return "ROVER_DOG", "near a gas station or convenience store"
-
-    lodging_feature = nearby_lodging_feature(features, ORDINARY_STOP_RADIUS_METERS)
-    if lodging_feature:
-        return "QUIET_TIME", "near a hotel or motel"
-
-    food_feature = next(
-        (
-            feature for feature in features
-            if feature["kind"] in food_kinds
-            and feature["distance_m"] <= ORDINARY_STOP_RADIUS_METERS
-        ),
-        None,
-    )
-    if food_feature:
-        return "FOOD_STOP", "near a restaurant or cafe"
-
-    break_feature = next(
-        (
-            feature for feature in features
-            if feature["kind"] in break_kinds
-            and feature["distance_m"] <= OSM_NEARBY_RADIUS_METERS
-        ),
-        None,
-    )
-    if break_feature:
-        return "ROVER_BREAK", None
-
-    return "POSSIBLE_ACTIVATION", None
-
 
 
 # ------------------------------------------------------------
